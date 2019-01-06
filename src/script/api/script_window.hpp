@@ -2567,6 +2567,7 @@ public:
 	enum VehicleListWidgets {
 		WID_VL_CAPTION                               = ::WID_VL_CAPTION,                               ///< Caption of window.
 		WID_VL_SORT_ORDER                            = ::WID_VL_SORT_ORDER,                            ///< Sort order.
+		WID_VL_GROUP_BY_PULLDOWN                     = ::WID_VL_GROUP_BY_PULLDOWN,                     ///< Sort by dropdown list.
 		WID_VL_SORT_BY_PULLDOWN                      = ::WID_VL_SORT_BY_PULLDOWN,                      ///< Sort by dropdown list.
 		WID_VL_LIST                                  = ::WID_VL_LIST,                                  ///< List of the vehicles.
 		WID_VL_SCROLLBAR                             = ::WID_VL_SCROLLBAR,                             ///< Scrollbar for the list.
