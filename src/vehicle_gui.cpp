@@ -59,6 +59,11 @@ static BaseVehicleListWindow::VehicleIndividualSortFunction VehicleValueSorter;
 static BaseVehicleListWindow::VehicleIndividualSortFunction VehicleLengthSorter;
 static BaseVehicleListWindow::VehicleIndividualSortFunction VehicleTimeToLiveSorter;
 static BaseVehicleListWindow::VehicleIndividualSortFunction VehicleTimetableDelaySorter;
+static BaseVehicleListWindow::VehicleGroupSortFunction VehicleGroupLengthSorter;
+static BaseVehicleListWindow::VehicleGroupSortFunction VehicleGroupTotalProfitThisYearSorter;
+static BaseVehicleListWindow::VehicleGroupSortFunction VehicleGroupTotalProfitLastYearSorter;
+static BaseVehicleListWindow::VehicleGroupSortFunction VehicleGroupAverageProfitThisYearSorter;
+static BaseVehicleListWindow::VehicleGroupSortFunction VehicleGroupAverageProfitLastYearSorter;
 
 /** Wrapper to convert a VehicleIndividualSortFunction to a VehicleGroupSortFunction */
 template <BaseVehicleListWindow::VehicleIndividualSortFunction func>
@@ -96,6 +101,29 @@ const StringID BaseVehicleListWindow::vehicle_group_none_sorter_names[] = {
 	STR_SORT_BY_LENGTH,
 	STR_SORT_BY_LIFE_TIME,
 	STR_SORT_BY_TIMETABLE_DELAY,
+	INVALID_STRING_ID
+};
+
+BaseVehicleListWindow::VehicleGroupSortFunction * const BaseVehicleListWindow::vehicle_group_shared_orders_sorter_funcs[] = {
+	&VehicleGroupLengthSorter,
+	&VehicleGroupTotalProfitThisYearSorter,
+	&VehicleGroupTotalProfitLastYearSorter,
+	&VehicleGroupAverageProfitThisYearSorter,
+	&VehicleGroupAverageProfitLastYearSorter,
+};
+
+const StringID BaseVehicleListWindow::vehicle_group_shared_orders_sorter_names[] = {
+	STR_SORT_BY_NUM_VEHICLES,
+	STR_SORT_BY_TOTAL_PROFIT_THIS_YEAR,
+	STR_SORT_BY_TOTAL_PROFIT_LAST_YEAR,
+	STR_SORT_BY_AVERAGE_PROFIT_THIS_YEAR,
+	STR_SORT_BY_AVERAGE_PROFIT_LAST_YEAR,
+	INVALID_STRING_ID
+};
+
+const StringID BaseVehicleListWindow::vehicle_group_by_names[] = {
+	STR_GROUP_BY_NONE,
+	STR_GROUP_BY_SHARED_ORDERS,
 	INVALID_STRING_ID
 };
 
@@ -150,6 +178,7 @@ void BaseVehicleListWindow::BuildVehicleList()
 	GenerateVehicleSortList(&this->vehicles, this->vli);
 
 	this->vehgroups.Clear();
+	if (this->grouping == GB_NONE) {
 		uint max_unitnumber = 0;
 		for (auto it = this->vehicles.Begin(); it != this->vehicles.End(); ++it) {
 			GUIVehicleGroup * const vehgroup = this->vehgroups.Append();
@@ -163,6 +192,41 @@ void BaseVehicleListWindow::BuildVehicleList()
 			max_unitnumber = max<uint>(max_unitnumber, (*it)->unitnumber);
 		}
 		this->unitnumber_digits = CountDigitsForAllocatingSpace(max_unitnumber);
+	} else {
+		std::stable_sort(this->vehicles.Begin(), this->vehicles.End(), [](const Vehicle * const &u, const Vehicle * const &v) {
+			return u->FirstShared() < v->FirstShared(); // Sort by the primary vehicle; we just want all vehicles that share the same orders to form a contiguous range.
+		});
+
+		uint max_num_vehicles = 0;
+
+		const Vehicle **begin = this->vehicles.Begin();
+		while (begin != this->vehicles.End()) {
+			const Vehicle **end = std::find_if_not(begin, this->vehicles.End(), [first_shared = (*begin)->FirstShared()](const Vehicle * const &v) {
+				return v->FirstShared() == first_shared;
+			});
+
+			GUIVehicleGroup * const vehgroup = this->vehgroups.Append();
+
+			vehgroup->vehicles_begin = begin;
+			vehgroup->vehicles_end = end;
+
+			vehgroup->display_profit_this_year = 0;
+			vehgroup->display_profit_last_year = 0;
+			vehgroup->age = 0;
+			for (auto it = begin; it != end; ++it) {
+				const Vehicle * const v = (*it);
+				vehgroup->display_profit_this_year += v->GetDisplayProfitThisYear();
+				vehgroup->display_profit_last_year += v->GetDisplayProfitLastYear();
+				vehgroup->age = max<Date>(vehgroup->age, v->age);
+			}
+
+			max_num_vehicles = max<uint>(max_num_vehicles, static_cast<uint>(vehgroup->NumVehicles()));
+
+			begin = end;
+		}
+
+		this->unitnumber_digits = CountDigitsForAllocatingSpace(max_num_vehicles);
+	}
 
 	this->vehgroups.RebuildDone();
 	this->vscroll->SetCount(this->vehgroups.Length());
@@ -1116,6 +1180,36 @@ StringID GetCargoSubtypeText(const Vehicle *v)
 	return STR_EMPTY;
 }
 
+/** Sort vehicle groups by the number of vehicles in the group */
+static int CDECL VehicleGroupLengthSorter(const GUIVehicleGroup *a, const GUIVehicleGroup *b)
+{
+	return a->NumVehicles() - b->NumVehicles();
+}
+
+/** Sort vehicle groups by the total profit this year */
+static int CDECL VehicleGroupTotalProfitThisYearSorter(const GUIVehicleGroup *a, const GUIVehicleGroup *b)
+{
+	return a->display_profit_this_year - b->display_profit_this_year;
+}
+
+/** Sort vehicle groups by the total profit last year */
+static int CDECL VehicleGroupTotalProfitLastYearSorter(const GUIVehicleGroup *a, const GUIVehicleGroup *b)
+{
+	return a->display_profit_last_year - b->display_profit_last_year;
+}
+
+/** Sort vehicle groups by the average profit this year */
+static int CDECL VehicleGroupAverageProfitThisYearSorter(const GUIVehicleGroup *a, const GUIVehicleGroup *b)
+{
+	return a->display_profit_this_year * static_cast<uint>(b->NumVehicles()) - b->display_profit_this_year * static_cast<uint>(a->NumVehicles());
+}
+
+/** Sort vehicle groups by the average profit last year */
+static int CDECL VehicleGroupAverageProfitLastYearSorter(const GUIVehicleGroup *a, const GUIVehicleGroup *b)
+{
+	return a->display_profit_last_year * static_cast<uint>(b->NumVehicles()) - b->display_profit_last_year * static_cast<uint>(a->NumVehicles());
+}
+
 /** Sort vehicles by their number */
 static int CDECL VehicleNumberSorter(const Vehicle * const *a, const Vehicle * const *b)
 {
@@ -1291,6 +1385,12 @@ static const NWidgetPart _nested_vehicle_list[] = {
 	EndContainer(),
 
 	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_VL_GROUP_ORDER), SetMinimalSize(81, 12), SetFill(0, 1), SetDataTip(STR_STATION_VIEW_GROUP, STR_TOOLTIP_GROUP_ORDER),
+		NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_VL_GROUP_BY_PULLDOWN), SetMinimalSize(167, 12), SetFill(0, 1), SetDataTip(0x0, STR_TOOLTIP_GROUP_ORDER),
+		NWidget(WWT_PANEL, COLOUR_GREY), SetMinimalSize(12, 12), SetFill(1, 1), SetResize(1, 0), EndContainer(),
+	EndContainer(),
+
+	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_VL_SORT_ORDER), SetMinimalSize(81, 12), SetFill(0, 1), SetDataTip(STR_BUTTON_SORT_BY, STR_TOOLTIP_SORT_ORDER),
 		NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_VL_SORT_BY_PULLDOWN), SetMinimalSize(167, 12), SetFill(0, 1), SetDataTip(0x0, STR_TOOLTIP_SORT_CRITERIA),
 		NWidget(WWT_PANEL, COLOUR_GREY), SetMinimalSize(12, 12), SetFill(1, 1), SetResize(1, 0),
@@ -1351,6 +1451,25 @@ static void DrawSmallOrderList(const Vehicle *v, int left, int right, int y, Veh
 			oid = 0;
 		}
 	} while (oid != start);
+}
+
+/** Draw small order list in the vehicle GUI, but without the little black arrow.  This is used for shared order groups. */
+static void DrawSmallOrderList(const Order *order, int left, int right, int y)
+{
+	bool rtl = _current_text_dir == TD_RTL;
+	int l_offset = rtl ? 0 : ScaleGUITrad(6);
+	int r_offset = rtl ? ScaleGUITrad(6) : 0;
+	int i = 0;
+	while (order != nullptr) {
+		if (order->IsType(OT_GOTO_STATION)) {
+			SetDParam(0, order->GetDestination());
+			DrawString(left + l_offset, right - r_offset, y, STR_TINY_BLACK_STATION);
+
+			y += FONT_HEIGHT_SMALL;
+			if (++i == 4) break;
+		}
+		order = order->next;
+	}
 }
 
 /**
@@ -1431,33 +1550,54 @@ void BaseVehicleListWindow::DrawVehicleListItems(VehicleID selected_vehicle, int
 
 		DrawVehicleProfitButton(vehgroup.age, vehgroup.display_profit_last_year, vehgroup.NumVehicles(), vehicle_button_x, y + FONT_HEIGHT_NORMAL + 3);
 
-		const Vehicle *v = vehgroup.GetSingleVehicle();
-		StringID str;
+		switch (this->grouping) {
+			case GB_NONE: {
+				const Vehicle *v = vehgroup.GetSingleVehicle();
+				StringID str;
 
-		DrawVehicleImage(v, image_left, image_right, y + FONT_HEIGHT_SMALL - 1, selected_vehicle, EIT_IN_LIST, 0);
+				DrawVehicleImage(v, image_left, image_right, y + FONT_HEIGHT_SMALL - 1, selected_vehicle, EIT_IN_LIST, 0);
 
-		if (v->name != NULL) {
-			/* The vehicle got a name so we will print it */
-			SetDParam(0, v->index);
-			DrawString(text_left, text_right, y, STR_TINY_BLACK_VEHICLE);
-		} else if (v->group_id != DEFAULT_GROUP) {
-			/* The vehicle has no name, but is member of a group, so print group name */
-			SetDParam(0, v->group_id);
-			DrawString(text_left, text_right, y, STR_TINY_GROUP, TC_BLACK);
+				if (v->name != NULL) {
+					/* The vehicle got a name so we will print it */
+					SetDParam(0, v->index);
+					DrawString(text_left, text_right, y, STR_TINY_BLACK_VEHICLE);
+				} else if (v->group_id != DEFAULT_GROUP) {
+					/* The vehicle has no name, but is member of a group, so print group name */
+					SetDParam(0, v->group_id);
+					DrawString(text_left, text_right, y, STR_TINY_GROUP, TC_BLACK);
+				}
+
+				if (show_orderlist) DrawSmallOrderList(v, orderlist_left, orderlist_right, y, v->cur_real_order_index);
+
+				if (v->IsChainInDepot()) {
+					str = STR_BLUE_COMMA;
+				} else {
+					str = (v->age > v->max_age - DAYS_IN_LEAP_YEAR) ? STR_RED_COMMA : STR_BLACK_COMMA;
+				}
+
+				SetDParam(0, v->unitnumber);
+				DrawString(left, right, y + 2, str);
+				break;
+			}
+
+			case GB_SHARED_ORDERS:
+
+				assert(vehgroup.NumVehicles() > 0);
+
+				for (int i = 0; i < static_cast<int>(vehgroup.NumVehicles()); ++i) {
+					if (image_left + 8 * i >= image_right) break; // Break if there is no more space to draw any more vehicles anyway.
+					DrawVehicleImage(vehgroup.vehicles_begin[i], image_left + 8 * i, image_right, y + FONT_HEIGHT_SMALL - 1, selected_vehicle, EIT_IN_LIST, 0);
+				}
+
+				if (show_orderlist) DrawSmallOrderList((vehgroup.vehicles_begin[0])->GetFirstOrder(), orderlist_left, orderlist_right, y);
+
+				SetDParam(0, vehgroup.NumVehicles());
+				DrawString(left, right, y + 2, STR_BLACK_COMMA);
+				break;
+
+			default:
+				NOT_REACHED();
 		}
-
-		if (show_orderlist) DrawSmallOrderList(v, orderlist_left, orderlist_right, y, v->cur_real_order_index);
-
-		if (v->IsChainInDepot()) {
-			str = STR_BLUE_COMMA;
-		} else {
-			str = (v->age > v->max_age - DAYS_IN_LEAP_YEAR) ? STR_RED_COMMA : STR_BLACK_COMMA;
-		}
-
-		SetDParam(0, v->unitnumber);
-		DrawString(left, right, y + 2, str);
-
-
 
 		y += line_height;
 	}
@@ -1475,7 +1615,7 @@ void BaseVehicleListWindow::UpdateSortingFromGrouping()
 		case VEH_AIRCRAFT: this->sorting = &_sorting[this->grouping].aircraft; break;
 		default: NOT_REACHED();
 	}
-	this->vehgroups.SetSortFuncs(this->vehicle_group_none_sorter_funcs);
+	this->vehgroups.SetSortFuncs(this->GetVehicleSorterFuncs());
 	this->vehgroups.SetListing(*this->sorting);
 	this->vehgroups.ForceRebuild();
 	this->vehgroups.NeedResort();
@@ -1656,8 +1796,11 @@ public:
 				WIDGET_LIST_END);
 		}
 
+		/* Set text of group by dropdown widget. */
+		this->GetWidget<NWidgetCore>(WID_VL_GROUP_BY_PULLDOWN)->widget_data = this->vehicle_group_by_names[this->grouping];
+
 		/* Set text of sort by dropdown widget. */
-		this->GetWidget<NWidgetCore>(WID_VL_SORT_BY_PULLDOWN)->widget_data = this->vehicle_group_none_sorter_names[this->vehgroups.SortType()];
+		this->GetWidget<NWidgetCore>(WID_VL_SORT_BY_PULLDOWN)->widget_data = this->GetVehicleSorterNames()[this->vehgroups.SortType()];
 
 		this->DrawWidgets();
 	}
@@ -1670,8 +1813,12 @@ public:
 				this->SetDirty();
 				break;
 
+			case WID_VL_GROUP_BY_PULLDOWN:// Select sorting criteria dropdown menu
+				ShowDropDownMenu(this, this->vehicle_group_by_names, this->grouping, WID_VL_GROUP_BY_PULLDOWN, 0, 0);
+				return;
+
 			case WID_VL_SORT_BY_PULLDOWN:// Select sorting criteria dropdown menu
-				ShowDropDownMenu(this, this->vehicle_group_none_sorter_names, this->vehgroups.SortType(), WID_VL_SORT_BY_PULLDOWN, 0,
+				ShowDropDownMenu(this, this->GetVehicleSorterNames(), this->vehgroups.SortType(), WID_VL_SORT_BY_PULLDOWN, 0,
 						(this->vli.vtype == VEH_TRAIN || this->vli.vtype == VEH_ROAD) ? 0 : (1 << 10));
 				return;
 
@@ -1680,9 +1827,23 @@ public:
 				if (id_v >= this->vehgroups.Length()) return; // click out of list bound
 
 				const GUIVehicleGroup &vehgroup = this->vehgroups[id_v];
-				const Vehicle *v = vehgroup.GetSingleVehicle();
+				switch (this->grouping) {
+					case GB_NONE: {
+						const Vehicle *v = vehgroup.GetSingleVehicle();
+						if (!VehicleClicked(v)) ShowVehicleViewWindow(v);
+						break;
+					}
 
-				if (!VehicleClicked(v)) ShowVehicleViewWindow(v);
+					case GB_SHARED_ORDERS:
+						assert(vehgroup.NumVehicles() > 0);
+						// TODO: support ctrl-click for cloning shared orders
+						// this might be hard, because there is currently no way to clone shared orders except by supplying a vehicle (but we don't want to enable other kinds of vehicle functionality)
+						ShowVehicleListWindow(vehgroup.vehicles_begin[0]);
+						break;
+
+					default: NOT_REACHED();
+				}
+
 				break;
 			}
 
@@ -1706,9 +1867,14 @@ public:
 	virtual void OnDropdownSelect(int widget, int index)
 	{
 		switch (widget) {
+			case WID_VL_GROUP_BY_PULLDOWN:
+				this->UpdateVehicleGroupBy(static_cast<GroupBy>(index));
+				break;
+
 			case WID_VL_SORT_BY_PULLDOWN:
 				this->vehgroups.SetSortType(index);
 				break;
+
 			case WID_VL_MANAGE_VEHICLES_DROPDOWN:
 				assert(this->vehicles.Length() != 0);
 
@@ -1724,6 +1890,7 @@ public:
 					default: NOT_REACHED();
 				}
 				break;
+
 			default: NOT_REACHED();
 		}
 		this->SetDirty();

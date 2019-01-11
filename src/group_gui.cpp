@@ -71,6 +71,11 @@ static const NWidgetPart _nested_group_widgets[] = {
 		/* right part */
 		NWidget(NWID_VERTICAL),
 			NWidget(NWID_HORIZONTAL),
+				NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_GL_GROUP_BY_ORDER), SetMinimalSize(81, 12), SetDataTip(STR_STATION_VIEW_GROUP, STR_TOOLTIP_GROUP_ORDER),
+				NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_GL_GROUP_BY_DROPDOWN), SetMinimalSize(167, 12), SetDataTip(0x0, STR_TOOLTIP_GROUP_ORDER),
+				NWidget(WWT_PANEL, COLOUR_GREY), SetMinimalSize(12, 12), SetResize(1, 0), EndContainer(),
+			EndContainer(),
+			NWidget(NWID_HORIZONTAL),
 				NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_GL_SORT_BY_ORDER), SetMinimalSize(81, 12), SetDataTip(STR_BUTTON_SORT_BY, STR_TOOLTIP_SORT_ORDER),
 				NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_GL_SORT_BY_DROPDOWN), SetMinimalSize(167, 12), SetDataTip(0x0, STR_TOOLTIP_SORT_CRITERIA),
 				NWidget(WWT_PANEL, COLOUR_GREY), SetMinimalSize(12, 12), SetResize(1, 0), EndContainer(),
@@ -507,8 +512,11 @@ public:
 		if (!IsDefaultGroupID(this->vli.index) && !IsAllGroupID(this->vli.index) && Group::Get(this->vli.index)->replace_protection) protect_sprite = SPR_GROUP_REPLACE_ON_TRAIN;
 		this->GetWidget<NWidgetCore>(WID_GL_REPLACE_PROTECTION)->widget_data = protect_sprite + this->vli.vtype;
 
-		/* Set text of sort by dropdown */
-		this->GetWidget<NWidgetCore>(WID_GL_SORT_BY_DROPDOWN)->widget_data = this->vehicle_group_none_sorter_names[this->vehgroups.SortType()];
+		/* Set text of "group by" dropdown widget. */
+		this->GetWidget<NWidgetCore>(WID_GL_GROUP_BY_DROPDOWN)->widget_data = this->vehicle_group_by_names[this->grouping];
+
+		/* Set text of "sort by" dropdown widget. */
+		this->GetWidget<NWidgetCore>(WID_GL_SORT_BY_DROPDOWN)->widget_data = this->GetVehicleSorterNames()[this->vehgroups.SortType()];
 
 		this->DrawWidgets();
 	}
@@ -620,6 +628,10 @@ public:
 				this->SetDirty();
 				break;
 
+			case WID_GL_GROUP_BY_DROPDOWN:// Select grouping option dropdown menu
+				ShowDropDownMenu(this, this->vehicle_group_by_names, this->grouping, WID_GL_GROUP_BY_DROPDOWN, 0, 0);
+				return;
+
 			case WID_GL_SORT_BY_DROPDOWN: // Select sorting criteria dropdown menu
 				ShowDropDownMenu(this, this->GetVehicleSorterNames(), this->vehgroups.SortType(),  WID_GL_SORT_BY_DROPDOWN, 0, (this->vli.vtype == VEH_TRAIN || this->vli.vtype == VEH_ROAD) ? 0 : (1 << 10));
 				return;
@@ -658,15 +670,31 @@ public:
 				if (id_v >= this->vehgroups.Length()) return; // click out of list bound
 
 				const GUIVehicleGroup &vehgroup = this->vehgroups[id_v];
-				const Vehicle * const v = vehgroup.GetSingleVehicle();
+				switch (this->grouping) {
+					case GB_NONE: {
+						const Vehicle *v = vehgroup.GetSingleVehicle();
+						if (VehicleClicked(v)) break;
 
-				this->vehicle_sel = v->index;
+						this->vehicle_sel = v->index;
 
-				SetObjectToPlaceWnd(SPR_CURSOR_MOUSE, PAL_NONE, HT_DRAG, this);
-				SetMouseCursorVehicle(v, EIT_IN_LIST);
-				_cursor.vehchain = true;
+						SetObjectToPlaceWnd(SPR_CURSOR_MOUSE, PAL_NONE, HT_DRAG, this);
+						SetMouseCursorVehicle(v, EIT_IN_LIST);
+						_cursor.vehchain = true;
 
-				this->SetDirty();
+						this->SetDirty();
+						break;
+					}
+
+					case GB_SHARED_ORDERS:
+						assert(vehgroup.NumVehicles() > 0);
+						/* No drag-and-drop support for shared order grouping; we immediately open the shared orders window */
+						ShowVehicleListWindow(vehgroup.vehicles_begin[0]);
+						break;
+
+					default:
+						NOT_REACHED();
+				}
+
 				break;
 			}
 
@@ -778,10 +806,21 @@ public:
 				if (id_v >= this->vehgroups.Length()) return; // click out of list bound
 
 				const GUIVehicleGroup &vehgroup = this->vehgroups[id_v];
-				const Vehicle *v = vehgroup.GetSingleVehicle();
-				if (!VehicleClicked(v) && vindex == v->index) {
-					ShowVehicleViewWindow(v);
+				switch (this->grouping) {
+					case GB_NONE: {
+						const Vehicle *v = vehgroup.GetSingleVehicle();
+						if (!VehicleClicked(v) && vindex == v->index) {
+							ShowVehicleViewWindow(v);
+						}
+						break;
+					}
+					case GB_SHARED_ORDERS:
+						/* Currently no drag-and-drop support when grouped by shared orders.  Modify this if we want to support some drag-drop behaviour for shared order list items. */
+						NOT_REACHED();
+					default:
+						NOT_REACHED();
 				}
+				break;
 			}
 		}
 	}
@@ -809,6 +848,10 @@ public:
 	virtual void OnDropdownSelect(int widget, int index)
 	{
 		switch (widget) {
+			case WID_GL_GROUP_BY_DROPDOWN:
+				this->UpdateVehicleGroupBy(static_cast<GroupBy>(index));
+				break;
+
 			case WID_GL_SORT_BY_DROPDOWN:
 				this->vehgroups.SetSortType(index);
 				break;
