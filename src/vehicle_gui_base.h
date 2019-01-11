@@ -12,19 +12,52 @@
 #ifndef VEHICLE_GUI_BASE_H
 #define VEHICLE_GUI_BASE_H
 
+#include "core/smallvec_type.hpp"
+#include "date_type.h"
+#include "economy_type.h"
 #include "sortlist_type.h"
 #include "vehiclelist.h"
 #include "window_gui.h"
 #include "widgets/dropdown_type.h"
 
+#include <iterator>
+
+struct GUIVehicleGroup {
+	const Vehicle * const * vehicles_begin; ///< Pointer to beginning element of this vehicle group.
+	const Vehicle * const * vehicles_end;   ///< Pointer to past-the-end element of this vehicle group.
+	Money display_profit_this_year;         ///< Total profit for the vehicle group this year.
+	Money display_profit_last_year;         ///< Total profit for the vehicle group laste year.
+	Date age;                               ///< Age in days of oldest vehicle in the group.
+	std::ptrdiff_t NumVehicles() const {
+		return std::distance(vehicles_begin, vehicles_end);
+	}
+	const Vehicle * GetSingleVehicle() const {
+		assert(NumVehicles() == 1);
+		return vehicles_begin[0];
+	}
+};
+
+typedef GUIList<GUIVehicleGroup> GUIVehicleGroupList;
 typedef GUIList<const Vehicle*> GUIVehicleList;
 
 struct BaseVehicleListWindow : public Window {
-	GUIVehicleList vehicles;  ///< The list of vehicles
-	Listing *sorting;         ///< Pointer to the vehicle type related sorting.
-	byte unitnumber_digits;   ///< The number of digits of the highest unit number
+
+	enum GroupBy : byte {
+		GB_NONE,
+
+		GB_END,
+	};
+
+	GroupBy grouping;                         ///< How we want to group the list.
+	SmallVector<const Vehicle*, 32> vehicles; ///< List of vehicles.  This is the buffer for vehgroups to point into.
+	GUIVehicleGroupList vehgroups;            ///< List of (groups of) vehicles.
+	Listing *sorting;                         ///< Pointer to the vehicle type related sorting.
+	byte unitnumber_digits;                   ///< The number of digits of the highest unit number.
 	Scrollbar *vscroll;
-	VehicleListIdentifier vli; ///< Identifier of the vehicle list we want to currently show.
+	VehicleListIdentifier vli;                ///< Identifier of the vehicle list we want to currently show.
+
+	typedef GUIVehicleGroupList::SortFunction VehicleGroupSortFunction;
+	typedef GUIVehicleList::SortFunction VehicleIndividualSortFunction;
 
 	enum ActionDropdownItem {
 		ADI_REPLACE,
@@ -35,19 +68,35 @@ struct BaseVehicleListWindow : public Window {
 	};
 
 	static const StringID vehicle_depot_name[];
-	static const StringID vehicle_sorter_names[];
-	static GUIVehicleList::SortFunction * const vehicle_sorter_funcs[];
+	static const StringID vehicle_group_by_names[];
+	static const StringID vehicle_group_none_sorter_names[];
+	static const StringID vehicle_group_shared_orders_sorter_names[];
+	static VehicleGroupSortFunction * const vehicle_group_none_sorter_funcs[];
+	static VehicleGroupSortFunction * const vehicle_group_shared_orders_sorter_funcs[];
 
 	BaseVehicleListWindow(WindowDesc *desc, WindowNumber wno) : Window(desc), vli(VehicleListIdentifier::UnPack(wno))
 	{
-		this->vehicles.SetSortFuncs(this->vehicle_sorter_funcs);
+		// TODO: retrieve the user preference from somewhere instead of intializing to GB_NONE for every new window.
+		this->grouping = GB_NONE;
+		this->UpdateSortingFromGrouping();
 	}
 
+	void UpdateSortingFromGrouping();
+
 	void DrawVehicleListItems(VehicleID selected_vehicle, int line_height, const Rect &r) const;
+	void UpdateVehicleGroupBy(GroupBy group_by);
 	void SortVehicleList();
 	void BuildVehicleList();
 	Dimension GetActionDropdownSize(bool show_autoreplace, bool show_group);
 	DropDownList *BuildActionDropdownList(bool show_autoreplace, bool show_group);
+
+	const StringID *GetVehicleSorterNames() {
+		return vehicle_group_none_sorter_names;
+	}
+
+	VehicleGroupSortFunction * const *GetVehicleSorterFuncs() {
+		return vehicle_group_none_sorter_funcs;
+	}
 };
 
 uint GetVehicleListHeight(VehicleType type, uint divisor = 1);
@@ -59,6 +108,6 @@ struct Sorting {
 	Listing train;
 };
 
-extern Sorting _sorting;
+extern Sorting _sorting[BaseVehicleListWindow::GB_END];
 
 #endif /* VEHICLE_GUI_BASE_H */
