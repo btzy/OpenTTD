@@ -44,6 +44,7 @@ struct BaseVehicleListWindow : public Window {
 
 	enum GroupBy : byte {
 		GB_NONE,
+		GB_SHARED_ORDERS,
 
 		GB_END,
 	};
@@ -91,11 +92,25 @@ struct BaseVehicleListWindow : public Window {
 	DropDownList *BuildActionDropdownList(bool show_autoreplace, bool show_group);
 
 	const StringID *GetVehicleSorterNames() {
-		return vehicle_group_none_sorter_names;
+		switch (this->grouping) {
+			case GB_NONE:
+				return vehicle_group_none_sorter_names;
+			case GB_SHARED_ORDERS:
+				return vehicle_group_shared_orders_sorter_names;
+			default:
+				NOT_REACHED();
+		}
 	}
 
 	VehicleGroupSortFunction * const *GetVehicleSorterFuncs() {
-		return vehicle_group_none_sorter_funcs;
+		switch (this->grouping) {
+			case GB_NONE:
+				return vehicle_group_none_sorter_funcs;
+			case GB_SHARED_ORDERS:
+				return vehicle_group_shared_orders_sorter_funcs;
+			default:
+				NOT_REACHED();
+		}
 	}
 };
 
