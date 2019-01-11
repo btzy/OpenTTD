@@ -1466,6 +1466,8 @@ public:
 	/** Widgets of the #VehicleGroupWindow class. */
 	enum GroupListWidgets {
 		WID_GL_CAPTION                               = ::WID_GL_CAPTION,                               ///< Caption of the window.
+		WID_GL_GROUP_BY_ORDER                        = ::WID_GL_GROUP_BY_ORDER,                        ///< Group order.
+		WID_GL_GROUP_BY_DROPDOWN                     = ::WID_GL_GROUP_BY_DROPDOWN,                     ///< Group by dropdown list.
 		WID_GL_SORT_BY_ORDER                         = ::WID_GL_SORT_BY_ORDER,                         ///< Sort order.
 		WID_GL_SORT_BY_DROPDOWN                      = ::WID_GL_SORT_BY_DROPDOWN,                      ///< Sort by dropdown list.
 		WID_GL_LIST_VEHICLE                          = ::WID_GL_LIST_VEHICLE,                          ///< List of the vehicles.
@@ -2625,6 +2627,8 @@ public:
 	/** Widgets of the #VehicleListWindow class. */
 	enum VehicleListWidgets {
 		WID_VL_CAPTION                               = ::WID_VL_CAPTION,                               ///< Caption of window.
+		WID_VL_GROUP_ORDER                           = ::WID_VL_GROUP_ORDER,                           ///< Group order.
+		WID_VL_GROUP_BY_PULLDOWN                     = ::WID_VL_GROUP_BY_PULLDOWN,                     ///< Group by dropdown list.
 		WID_VL_SORT_ORDER                            = ::WID_VL_SORT_ORDER,                            ///< Sort order.
 		WID_VL_SORT_BY_PULLDOWN                      = ::WID_VL_SORT_BY_PULLDOWN,                      ///< Sort by dropdown list.
 		WID_VL_LIST                                  = ::WID_VL_LIST,                                  ///< List of the vehicles.
