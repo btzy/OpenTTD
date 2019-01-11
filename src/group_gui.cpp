@@ -538,7 +538,7 @@ public:
 				uint32 occupancy = 0;
 				uint32 vehicle_count = this->vehicles.Length();
 
-				for (uint i = 0; i < vehicle_count; i++) {
+				for (uint32 i = 0; i < vehicle_count; i++) {
 					const Vehicle *v = this->vehicles[i];
 					assert(v->owner == this->owner);
 
