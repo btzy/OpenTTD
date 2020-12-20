@@ -182,7 +182,6 @@ void BaseVehicleListWindow::BuildVehicleList()
 
 	this->vehgroups.clear();
 
-	/* Note: This can be optimized so that merely changing the "group by" dropdown value does not need to call GenerateVehicleSortList again. */
 	GenerateVehicleSortList(&this->vehicles, this->vli);
 
 	if (this->grouping == GB_NONE) {
