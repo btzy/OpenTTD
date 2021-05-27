@@ -45,6 +45,8 @@
 
 #include "safeguards.h"
 
+#include "auto_upgrade.h"
+
 /* scriptfile handling */
 static uint _script_current_depth; ///< Depth of scripts running (used to abort execution when #ConReturn is encountered).
 
@@ -2316,6 +2318,18 @@ DEF_CONSOLE_CMD(ConDumpInfo)
 	return false;
 }
 
+
+DEF_CONSOLE_CMD(ConAutoUpgrade)
+{
+	if (argc == 0) {
+		IConsoleHelp("Auto upgrade rail. Usage: 'auto_upgrade <rail_type>'");
+		return true;
+	}
+
+	if (argc < 2) return false;
+	return AutoUpgradeRailType::Start(argv[1]);
+}
+
 /*******************************
  * console command registration
  *******************************/
@@ -2382,6 +2396,8 @@ void IConsoleStdLibRegister()
 
 	IConsoleCmdRegister("companies",       ConCompanies);
 	IConsoleAliasRegister("players",       "companies");
+
+	IConsoleCmdRegister("auto_upgrade", ConAutoUpgrade);
 
 	/* networking functions */
 
