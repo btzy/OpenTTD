@@ -9,6 +9,7 @@
 #include "console_type.h"
 #include "depot_map.h"
 #include "engine_func.h"
+#include "error.h"
 #include "map_func.h"
 #include "rail_map.h"
 #include "rail_type.h"
@@ -20,6 +21,7 @@
 #include "vehiclelist.h"
 
 #include <algorithm>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -66,6 +68,7 @@ namespace AutoUpgradeRailType {
 	// represents a set of vehicles sharing orders
 	struct Route {
 		std::vector<uint32> packed_orders; // orders that have been packed using order.Pack()
+		std::map<std::vector<CargoID>, Vehicle*> first_clonables; // vehicles for cloning (same route and same list of wagons)
 		Vehicle* first_shared; // first shared new vehicle, null if there are no vehicles created yet
 
 		Route(std::vector<uint32> packed_orders) : packed_orders(packed_orders), first_shared(nullptr) {}
@@ -105,6 +108,19 @@ namespace AutoUpgradeRailType {
 			return false;
 		}
 
+		// do you have at least one train?
+		bool has_trains = false;
+		for (const Vehicle* v : Vehicle::Iterate()) {
+			if (v->type == VEH_TRAIN && v->IsPrimaryVehicle() && v->owner == _local_company) {
+				has_trains = true;
+				break;
+			}
+		}
+		if (!has_trains) {
+			IConsolePrintF(CC_ERROR, "[Auto Upgrade] You don't have any trains.");
+			return false;
+		}
+
 		current_company = _local_company;
 		ResetCoroState();
 		DoCoro();
@@ -131,7 +147,7 @@ namespace AutoUpgradeRailType {
 			for (const Engine* e : Engine::IterateType(VEH_TRAIN)) {
 				EngineID eid = e->index;
 				const RailVehicleInfo& rvi = e->u.rail;
-				if (rvi.railtype != rail_type || !IsEngineBuildable(eid, VEH_TRAIN, current_company) || e->GetPower() == 0) continue;
+				if (rvi.railtype != rail_type /* we don't want non-electric vehicles if we have an electric depot */ || !IsEngineBuildable(eid, VEH_TRAIN, current_company) || e->GetPower() == 0) continue;
 				if (!best) {
 					best = e;
 					continue;
@@ -166,7 +182,7 @@ namespace AutoUpgradeRailType {
 			for (const Engine* e : Engine::IterateType(VEH_TRAIN)) {
 				EngineID eid = e->index;
 				const RailVehicleInfo& rvi = e->u.rail;
-				if (rvi.railtype != rail_type || !IsEngineBuildable(eid, VEH_TRAIN, current_company) || e->GetPower() > 0 || !HasBit(GetRefittableCargoTypes(e->index), cargo)) continue;
+				if (!HasPowerOnRail(rvi.railtype, rail_type) || !IsEngineBuildable(eid, VEH_TRAIN, current_company) || e->GetPower() > 0 || !HasBit(GetRefittableCargoTypes(e->index), cargo)) continue;
 				if (!best) {
 					best = e;
 					continue;
@@ -191,24 +207,30 @@ namespace AutoUpgradeRailType {
 	}
 
 	Task DoCoro() {
+		co_await WaitTick();
+
 		// Step 1... send all vehicles to depot
 		{
 			IConsolePrintF(CC_INFO, "[Auto Upgrade] Issuing orders for all trains to go to depot...");
-			VehicleListIdentifier vli(VL_GROUP_LIST, VEH_TRAIN, current_company);
+			VehicleListIdentifier vli(VL_GROUP_LIST, VEH_TRAIN, current_company, ALL_GROUP);
 			if ((co_await CoroDoCommandP(0, DEPOT_MASS_SEND, vli.Pack(), GetCmdSendToDepot(VEH_TRAIN))).Failed()) {
-				IConsolePrintF(CC_ERROR, "[Auto Upgrade] Failed to send all trains to depot.");
-				BailOut();
-				co_return;
+				// maybe all trains can't find route to depot currently
+				IConsolePrintF(CC_WARNING, "[Auto Upgrade] Failed to send all trains to depot, but we will carry on anyway.");
+			}
+			else {
+				IConsolePrintF(CC_INFO, "[Auto Upgrade] Mass goto depot order sent.");
 			}
 		}
 
 		co_await WaitTicks(TICKS_PER_SECOND);
 
+		IConsolePrintF(CC_INFO, "[Auto Upgrade] Issuing orders for remaining trains to go to depot...");
+
 		// Step 1 (clean-up)... send remaining vehicles to depot
 		while (true) {
 			size_t num_failed = 0;
 			for (const Vehicle* v : Vehicle::Iterate()) {
-				if (v->type == VEH_TRAIN && v->IsPrimaryVehicle() && v->owner == current_company) {
+				if (v->type == VEH_TRAIN && v->IsPrimaryVehicle() && v->owner == current_company && !v->IsStoppedInDepot()) {
 					// if it's not yet going to depot, then we should send it to the depot manually
 					if (v->current_order.GetType() != OT_GOTO_DEPOT) {
 						// We aren't spamming the server...
@@ -217,13 +239,14 @@ namespace AutoUpgradeRailType {
 							co_await WaitTicks(TICKS_PER_SECOND);
 						}
 						else {
+							HideActiveErrorMessage();
 							++num_failed;
 						}
 					}
 				}
 			}
 			if (num_failed == 0) break;
-			co_await WaitTicks(1);
+			co_await WaitTicks(TICKS_PER_SECOND);
 		}
 
 		IConsolePrintF(CC_INFO, "[Auto Upgrade] Done issuing all orders to go to depot.");
@@ -241,7 +264,7 @@ namespace AutoUpgradeRailType {
 				}
 			}
 			if (all_stopped) break;
-			co_await WaitTicks(1);
+			co_await WaitTick();
 		}
 
 		IConsolePrintF(CC_INFO, "[Auto Upgrade] All trains are now stopped in depot.");
@@ -335,7 +358,7 @@ namespace AutoUpgradeRailType {
 
 		// we buy the best engines and best wagons available for each train,
 		// where "best" means the one that is fastest, and to break ties we buy the most expensive one.
-
+		std::map<std::vector<CargoID>, Vehicle*> vehicles_for_copying;
 		for (const VehicleProperties& prop : vehicle_properties) {
 			if (GetRailType(prop.depot) != rail_type) {
 				IConsolePrintF(CC_ERROR, "[Auto Upgrade] Somehow, depot was not upgraded.");
@@ -344,82 +367,107 @@ namespace AutoUpgradeRailType {
 			}
 			Route& route = routes[prop.route_index];
 			Vehicle* new_train;
-			if (route.first_shared) {
-				// has existing train on this route, we should clone it to share orders
-				// DoCommandP(this->window_number, v->index, 1, CMD_CLONE_VEHICLE, nullptr);
-				if ((co_await CoroDoCommandP(prop.depot, route.first_shared->index, 1, CMD_CLONE_VEHICLE)).Failed()) {
-					IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot share orders.");
+			auto vehicles_for_cloning_it = route.first_clonables.find(prop.cargos);
+			if (vehicles_for_cloning_it != route.first_clonables.end()) {
+				if ((co_await CoroDoCommandP(prop.depot, vehicles_for_cloning_it->second->index, 1, CMD_CLONE_VEHICLE)).Failed()) {
+					IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot clone vehicle to share orders.");
 					BailOut();
 					co_return;
 				}
-				new_train = Vehicle::Get(_new_vehicle_id)->First(); // does this work for cloned vehicles?
-				co_await WaitTicks(TICKS_PER_SECOND);
+				new_train = Vehicle::Get(coro_new_vehicle_id)->First();
+				co_await WaitTick();
 			}
 			else {
-				// no existing vehicle, we have to manually build it
-
-				// the cargo that our engines should be refitted to
-				CargoID wagon_cargo = CT_INVALID;
-				for (CargoID cargo : prop.cargos) {
-					if (cargo != CT_INVALID) {
-						wagon_cargo = cargo;
-						break;
+				auto vehicle_for_copying_it = vehicles_for_copying.find(prop.cargos);
+				if (vehicle_for_copying_it != vehicles_for_copying.end()) {
+					if ((co_await CoroDoCommandP(prop.depot, vehicle_for_copying_it->second->index, 0, CMD_CLONE_VEHICLE)).Failed()) {
+						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot copy vehicle.");
+						BailOut();
+						co_return;
 					}
+					new_train = Vehicle::Get(coro_new_vehicle_id)->First();
 				}
+				else {
+					// no existing vehicle, we have to manually build it
 
-				// build all units
-				Vehicle* new_head = nullptr;
-				for (CargoID cargo : prop.cargos) {
-					const auto [engine_id, cargo_id] = GetNewTrainUnit(cargo, wagon_cargo);
-					if (engine_id == INVALID_ENGINE) {
-						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot find a suitable engine/wagon for cargo = %u.", static_cast<unsigned>(cargo));
-						BailOut();
-						co_return;
-					}
-					if ((co_await CoroDoCommandP(prop.depot, engine_id | (cargo_id << 24), 0, GetCmdBuildVeh(VEH_TRAIN))).Failed()) {
-						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot build engine/wagon.");
-						BailOut();
-						co_return;
-					}
-					Vehicle* new_wagon = Vehicle::Get(_new_vehicle_id);
-					co_await WaitTicks(TICKS_PER_SECOND);
-					if (!new_head) {
-						new_head = new_wagon;
-					}
-					else {
-						// move the vehicle if not already in the chain
-						if (new_head != new_wagon->First()) {
-							if ((co_await CoroDoCommandP(prop.depot, new_wagon->index, new_head->Last()->index, CMD_MOVE_RAIL_VEHICLE)).Failed()) {
-								IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot move wagon to train.");
-								BailOut();
-								co_return;
-							}
-							co_await WaitTicks(TICKS_PER_SECOND);
+					// the cargo that our engines should be refitted to
+					CargoID wagon_cargo = CT_INVALID;
+					for (CargoID cargo : prop.cargos) {
+						if (cargo != CT_INVALID) {
+							wagon_cargo = cargo;
+							break;
 						}
 					}
-				}
-				if (!new_head) {
-					IConsolePrintF(CC_ERROR, "[Auto Upgrade] Somehow, there are zero vehicles in the new train.");
-					BailOut();
-					co_return;
-				}
 
-				// add the new orders
-				for (size_t i = 0; i != route.packed_orders.size(); ++i) {
-					if ((co_await CoroDoCommandP(prop.depot, new_head->index + (static_cast<uint32>(i) << 20), route.packed_orders[i], CMD_INSERT_ORDER)).Failed()) {
-						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot insert order.");
+					// build all units
+					Vehicle* new_head = nullptr;
+					for (CargoID cargo : prop.cargos) {
+						const auto [engine_id, cargo_id] = GetNewTrainUnit(cargo, wagon_cargo);
+						if (engine_id == INVALID_ENGINE) {
+							IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot find a suitable engine/wagon for cargo = %u.", static_cast<unsigned>(cargo));
+							BailOut();
+							co_return;
+						}
+						if ((co_await CoroDoCommandP(prop.depot, engine_id | (cargo_id << 24), 0, GetCmdBuildVeh(VEH_TRAIN))).Failed()) {
+							IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot build engine/wagon.");
+							BailOut();
+							co_return;
+						}
+						Vehicle* new_wagon = Vehicle::Get(coro_new_vehicle_id);
+						co_await WaitTick();
+						if (!new_head) {
+							new_head = new_wagon;
+						}
+						else {
+							// move the vehicle if not already in the chain
+							if (new_head != new_wagon->First()) {
+								if ((co_await CoroDoCommandP(prop.depot, new_wagon->index, new_head->Last()->index, CMD_MOVE_RAIL_VEHICLE)).Failed()) {
+									IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot move wagon to train.");
+									BailOut();
+									co_return;
+								}
+								co_await WaitTick();
+							}
+						}
+					}
+					if (!new_head) {
+						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Somehow, there are zero vehicles in the new train.");
 						BailOut();
 						co_return;
 					}
-					co_await WaitTicks(TICKS_PER_SECOND);
-				}
 
-				// assign it
-				new_train = route.first_shared = new_head;
+					// assign it
+					new_train = new_head;
+					vehicles_for_copying.try_emplace(prop.cargos, new_head);
+				}
+				if (route.first_shared) {
+					// has existing train on this route, we should clone it to share orders
+					if ((co_await CoroDoCommandP(prop.depot, new_train->index | CO_SHARE << 30, route.first_shared->index, CMD_CLONE_ORDER)).Failed()) {
+						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot share orders.");
+						BailOut();
+						co_return;
+					}
+					new_train = Vehicle::Get(coro_new_vehicle_id)->First();
+					co_await WaitTick();
+				}
+				else {
+					// add the new orders
+					for (size_t i = 0; i != route.packed_orders.size(); ++i) {
+						if ((co_await CoroDoCommandP(prop.depot, new_train->index + (static_cast<uint32>(i) << 20), route.packed_orders[i], CMD_INSERT_ORDER)).Failed()) {
+							IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot insert order.");
+							BailOut();
+							co_return;
+						}
+						co_await WaitTick();
+					}
+
+					route.first_shared = new_train;
+				}
+				route.first_clonables.try_emplace(prop.cargos, new_train);
 			}
 
 			// skip orders to the correct location, if this depot is in the order list
-			uint32 depot_order_index = 0;
+			VehicleOrderID depot_order_index = 0;
 			for (const Order* order : new_train->Orders()) {
 				if (order->IsType(OT_GOTO_DEPOT) && order->GetDestination() == GetDepotIndex(prop.depot)) break;
 				++depot_order_index;
@@ -427,7 +475,7 @@ namespace AutoUpgradeRailType {
 			if (depot_order_index < new_train->GetNumOrders()) {
 				// depot is in the order list
 				if (new_train->cur_real_order_index != depot_order_index) {
-					if ((co_await CoroDoCommandP(prop.depot, new_train->index, depot_order_index, CMD_SKIP_TO_ORDER)).Failed()) {
+					if ((co_await CoroDoCommandP(prop.depot, new_train->index, (depot_order_index + 1) % new_train->GetNumOrders(), CMD_SKIP_TO_ORDER)).Failed()) {
 						IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot skip to order.");
 						BailOut();
 						co_return;
@@ -438,7 +486,7 @@ namespace AutoUpgradeRailType {
 
 		// start all vehicles
 		{
-			VehicleListIdentifier vli(VL_GROUP_LIST, VEH_TRAIN, current_company);
+			VehicleListIdentifier vli(VL_GROUP_LIST, VEH_TRAIN, current_company, ALL_GROUP);
 			if ((co_await CoroDoCommandP(0, (1 << 1) | (1 << 0), vli.Pack(), CMD_MASS_START_STOP)).Failed()) {
 				IConsolePrintF(CC_ERROR, "[Auto Upgrade] Cannot start all trains.");
 				BailOut();

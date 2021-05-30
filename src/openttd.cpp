@@ -1408,8 +1408,11 @@ void StateGameLoop()
 		RunTileLoop();
 		CallVehicleTicks();
 		CallLandscapeTick();
+
+		Backup<CompanyID> auto_upgrade_backup(_current_company, cur_company.GetOriginalValue(), FILE_LINE);
 		AutoUpgradeRailType::OnTick();
-		
+		auto_upgrade_backup.Restore();
+
 		BasePersistentStorageArray::SwitchMode(PSM_LEAVE_GAMELOOP);
 
 #ifndef DEBUG_DUMP_COMMANDS

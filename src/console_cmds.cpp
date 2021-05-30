@@ -2397,7 +2397,7 @@ void IConsoleStdLibRegister()
 	IConsoleCmdRegister("companies",       ConCompanies);
 	IConsoleAliasRegister("players",       "companies");
 
-	IConsoleCmdRegister("auto_upgrade", ConAutoUpgrade);
+	IConsoleCmdRegister("autoupgrade", ConAutoUpgrade);
 
 	/* networking functions */
 

@@ -87,6 +87,9 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
         set(HASHPREFIX "-u")
     endif()
 
+    # Override tags so that we can play normally
+    set(TAG "1.11.2")
+
     # Set the version string
     if(NOT TAG STREQUAL "")
         set(REV_VERSION "${TAG}")

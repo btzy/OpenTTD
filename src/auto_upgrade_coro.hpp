@@ -2,14 +2,17 @@
 #define AUTO_UPGRADE_CORO_HPP
 
 #include "command_func.h"
+#include "network/network.h"
+#include "vehicle_func.h"
 
 #include <coroutine>
 
 namespace AutoUpgradeRailType {
 
-	std::coroutine_handle<> coro_resumer = nullptr;
-	CommandCost coro_command_cost;
-	bool coro_waiting_for_callback = false;
+	inline std::coroutine_handle<> coro_resumer = nullptr;
+	inline bool coro_waiting_for_callback = false;
+	inline CommandCost coro_command_cost;
+	inline VehicleID coro_new_vehicle_id;
 
 	inline void ResetCoroState() {
 		if (coro_resumer) {
@@ -34,8 +37,9 @@ namespace AutoUpgradeRailType {
 	private:
 		TileIndex tile;
 		uint32_t p1, p2, cmd;
-		static void Callback(const CommandCost& result, TileIndex, uint32, uint32, uint32) {
+		static void Callback(const CommandCost& result, TileIndex tile, uint32 p1, uint32 p2, uint32 cmd) {
 			coro_command_cost = result;
+			coro_new_vehicle_id = _new_vehicle_id;
 			coro_waiting_for_callback = true;
 		}
 	public:
@@ -43,10 +47,19 @@ namespace AutoUpgradeRailType {
 		constexpr bool await_ready() const noexcept {
 			return false;
 		}
+		static void CallbackWrapper(const CommandCost& result, TileIndex tile, uint32 p1, uint32 p2, uint32 cmd) {
+			if (static_cast<uint16>(cmd) == CMD_FOUND_TOWN) {
+				CcFoundRandomTown(result, tile, p1, p2, cmd); // hack, since we can't introduce new callback indices, we repurpose an existing callback
+				return;
+			}
+			Callback(result, tile, p1, p2, cmd);
+		}
 		void await_suspend(std::coroutine_handle<> handle) {
 			assert(!coro_resumer);
 			coro_resumer = handle;
-			DoCommandP(tile, p1, p2, cmd, Callback);
+			if (!DoCommandP(tile, p1, p2, cmd, CallbackWrapper) && _networking) {
+				Callback(CommandCost(INVALID_STRING_ID), tile, p1, p2, cmd);
+			}
 		}
 		CommandCost await_resume() {
 			return coro_command_cost;
@@ -118,7 +131,7 @@ namespace AutoUpgradeRailType {
 	};
 
 	inline AwaitableTask WaitTicks(size_t numticks) {
-		while (numticks > 0) {
+		while (--numticks > 0) {
 			co_await WaitTick();
 		}
 	}
